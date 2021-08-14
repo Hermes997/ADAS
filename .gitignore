@@ -1,9 +1,0 @@
-*.sln
-*.vcxproj
-*.filters
-*.user
-
-.vs/
-x64/
-curve-lane-detection/x64/
-
