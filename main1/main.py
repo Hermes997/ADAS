@@ -1,22 +1,52 @@
+import copy
 import math
 
 import cv2
 import numpy as np
 
-# from dynamikontrol import Module
 
-cap = cv2.VideoCapture('calibratedSource2.mp4')
+cap = cv2.VideoCapture('calibratedSource5.mp4')
 net = cv2.dnn.readNetFromDarknet("yolov4-tiny_custom.cfg", "yolov4-tiny_custom_final.weights")
 classes = ['', 'bus', 'rickshaw', 'motorbike', 'car', 'three wheelers (CNG)', 'pickup', 'minivan', 'suv', 'van',
            'truck', 'bicycle', 'policecar', 'ambulance', 'human hauler', 'wheelbarrow', 'minibus', 'auto rickshaw',
            'army vehicle', 'scooter', 'garbagevan']
 
+_, sample_img = cap.read()
+cap_image_height, cap_image_width, _ = sample_img.shape
+handle_image_source = cv2.imread('handle.png', cv2.IMREAD_GRAYSCALE)
+handle_image = cv2.resize(handle_image_source, dsize=(int(cap_image_height * 0.4), int(cap_image_height * 0.4)),
+                          interpolation=cv2.INTER_CUBIC)
+mask_image_inverted = cv2.bitwise_not(handle_image)
+_, mask_image = cv2.threshold(handle_image[:, :], 1, 50, cv2.THRESH_BINARY)
+handle_image_height, handle_image_width = mask_image_inverted.shape
+
+
 CONFIDENCE = 0.1  # 차이냐 아니냐
 THRESHOLD = 0.3  # ㅇ
 CAR_WIDTH_TRESHOLD = 500
 
-_, sample_img = cap.read()
-cap_image_height, cap_image_width, _ = sample_img.shape
+
+chaser_flag = 0
+p2_width = 0
+p1_width = 0
+p2_height = 0
+p1_height = 0
+count = 0
+x = 0
+y = 0
+w = 0
+h = 0
+x1 = 0
+y1 = 0
+distance = 0
+final_speed = 0
+distance_str = ''
+final_speed_str = ''
+font = cv2.FONT_HERSHEY_PLAIN
+relative_speed = 0
+
+
+
 dark_image_side_height = int(cap_image_height * 0.4)
 dark_image_side_width = int(cap_image_width * 0.35)
 dark_image_side = np.zeros((dark_image_side_height, dark_image_side_width, 3))
@@ -41,11 +71,50 @@ bird_view_height = 75
 bird_view_width = 112
 dark_image = np.zeros((bird_view_height, int(bird_view_width * 0.5), 3))
 
+corners_original = np.array([[int(roi_image_width * warp_ratio_left), 0],
+                             [int(roi_image_width * warp_ratio_right), 0],
+                             [0, roi_image_height - 1],
+                             [roi_image_width - 1, roi_image_height - 1]], np.float32)
 
-# noinspection PyInterpreter
+corners_warp = np.array([[0, 0], [bird_view_width - 1, 0], [0, bird_view_height - 1],
+                         [bird_view_width - 1, bird_view_height - 1]], np.float32)
+
+
+def Detect_distance(car_w, car_x, img_cenx):  ##추가
+
+    f_x = 13613.69404427889 * 0.375
+    f_y = 14639.52311652638 * 0.375
+    f = (f_x + f_y) / 2 / 3 / 2
+    if car_x < img_cenx:
+        car_x += car_w
+    # 차길이 1900mm, 점선한개 8m, 차길이 4m, 중앙과 차사이 거리: w
+    weig = 4 / 1.9  # 가중치
+    car_h = car_w * weig  # 차 길이 픽셀
+    k = abs(img_cenx - car_x)
+    e = abs(car_h * k / (f - car_h))
+    # x축으로 중심과 거리
+    real_w = car_w - e  # 실제 차 범퍼 길이, car_w 인식되는 차길이
+    car_distance = 1.9 * f / real_w
+
+    return car_distance
+
+
 def Detect_object(img, net, CONFIDENCE, THRESHOLD):
-    hight, W, _ = img.shape
-
+    H, W, _ = img.shape
+    global p2_width
+    global p1_width
+    global p2_height
+    global p1_height
+    global count
+    global x, y, w, h
+    global distance
+    global final_speed
+    global font
+    global final_speed_str
+    global distance_str
+    global relative_speed
+    global x1
+    global y1
     blob = cv2.dnn.blobFromImage(img, scalefactor=1 / 255., size=(416, 416), swapRB=True)
     net.setInput(blob)
     output = net.forward()
@@ -59,7 +128,7 @@ def Detect_object(img, net, CONFIDENCE, THRESHOLD):
         confidence = scores[class_id]
 
         if confidence > CONFIDENCE:
-            cx, cy, w, h = box * np.array([W, hight, W, hight])
+            cx, cy, w, h = box * np.array([W, H, W, H])
             x = cx - (w / 2)
             y = cy - (h / 2)
 
@@ -69,20 +138,33 @@ def Detect_object(img, net, CONFIDENCE, THRESHOLD):
 
     idxs = cv2.dnn.NMSBoxes(boxes, confidences, CONFIDENCE, THRESHOLD)
 
-    # 390, 240, 90, 70 -> x,y,w,h
-
-    font = cv2.FONT_HERSHEY_PLAIN
     if len(idxs) > 0:
         for i in idxs.flatten():
-            label = str(classes[class_ids[i]])
             x, y, w, h = boxes[i]
-            veh = y + h / 2
+            cv2.rectangle(img, pt1=(x, y), pt2=(x + w, y + h), color=(0, 0, 255), thickness=2)
+            distance = round(Detect_distance(w, x, W / 2))
+            distance_str = str(distance)
 
-            lineveh = hight - 96
+            if cap_image_width * 0.4 - y * cap_image_width / cap_image_height * 0.05 < x < cap_image_width * 0.5:
+                relative_speed = ((p1_width - p2_width) + (p1_height - p2_height)) * y / cap_image_height
+                final_speed_str = str(round(relative_speed, 1))
+                p2_width = p1_width
+                p1_width = w
+                p2_height = p1_height
+                p1_height = h
+                x1, y1 = [x, y]
+                count = 20
 
-            confidence = str(round(confidences[i], 2))
-            cv2.rectangle(img, (x, y), (x + w, y + h), (255, 255, 255), 2)
-            cv2.putText(img, label + " " + confidence, (x, y + 20), font, 1, (0, 0, 255), 1)
+    if count > 0:
+        if relative_speed >= 0:
+            cv2.putText(img, 'Rel_speed :   ' + final_speed_str + 'km/h', (x1 - 50, y1 - 10), font, 1, (50, 255, 50), 1)
+            cv2.putText(img, 'Level of dangerous', (x1 - 30, y1 - 40), font, 1, (170, 170, 255), 1)
+        else:
+            cv2.putText(img, 'Rel_speed : ' + final_speed_str + 'km/h', (x1 - 50, y1 - 10), font, 1, (50, 255, 50), 1)
+            cv2.putText(img, 'Level of dangerous', (x1 - 30, y1 - 40), font, 1, (0, 0, 255), 1)
+        cv2.putText(img, 'Distance :    ' + distance_str + 'm', (x1 - 30, y1 - 25), font, 1, (50, 255, 50), 1)
+
+        count = count - 1
 
     return img
 
@@ -110,24 +192,14 @@ def Region_of_interest(image):
 
 
 def Warp_image(roi_image):
-    corners_original = np.array([[int(roi_image_width * warp_ratio_left), 0],
-                                 [int(roi_image_width * warp_ratio_right), 0],
-                                 [0, roi_image_height - 1],
-                                 [roi_image_width - 1, roi_image_height - 1]], np.float32)
-
-    corners_warp = np.array([[0, 0], [bird_view_width - 1, 0], [0, bird_view_height - 1],
-                             [bird_view_width - 1, bird_view_height - 1]], np.float32)
+    global corners_original
+    global corners_warp
 
     warp_trans_matrix = cv2.getPerspectiveTransform(corners_original, corners_warp)
     bird_view_size = (bird_view_width, bird_view_height)
     warp_image = cv2.warpPerspective(roi_image, warp_trans_matrix, bird_view_size)
 
     return warp_image
-
-
-def Filter_lane(warp_image):
-    # warp_image_hsl = cv2.cvtColor(image, cv2.COLOR_BGR2HLS)
-    warp_image_hsl_hue, warp_image_hsl_luminance, warp_image_hsl_saturation = cv2.split(warp_image)
 
 
 def Draw_Histogram(image):
@@ -234,20 +306,35 @@ def Decide_lane(lane_image):
 
     return return_image
 
-"""
-def Draw_hough_line_image(image):
+
+def To_ar_image_with_lane(image_source, lane_image):
+    global corners_original
+    global corners_warp
+
+    ar_component_matrix = cv2.getPerspectiveTransform(corners_warp, corners_original)
+    ar_image_size = (roi_image_width, roi_image_height)
+    ar_component = cv2.warpPerspective(lane_image, ar_component_matrix, ar_image_size)
+    set_box_image = np.zeros((cap_image_height, cap_image_width, 3), dtype=image_source.dtype)
+    set_box_image[roi_image_offset_y:roi_image_offset_y + roi_image_height,
+    roi_image_offset_x:roi_image_offset_x + roi_image_width] = ar_component
+    ar_image = image_source + set_box_image
+    return ar_image
+
+
+def Draw_hough_line_image(image, source):
+    global mask_image_inverted
+    global font
+    global cap_image_width
+    global cap_image_height
     image_height = image.shape[0]
     image_width = image.shape[1]
-    line_image = np.zeros((image_height, image_width, 3))
-    line_image_gray = cv2.cvtColor(line_image, cv2.COLOR_BGR2GRAY)
-
-    canny_image = cv2.Canny(line_image_gray, 100, 200)
-    lines = cv2.HoughLines(canny_image, 1, 3.141592 / 180, 10)
-
-    if lines.size() > 0:
-        for i in range(0, lines.size() + 1):
-            rho = lines[i][0]
-            theta = lines[i][1]
+    line_image = np.zeros((image_height, image_width, 3), image.dtype)
+    canny_image = cv2.Canny(image, 100, 200)
+    lines = cv2.HoughLines(canny_image, 1, 3.141592 / 180, 40)
+    if lines is not None:
+        for i in range(0, len(lines)):
+            rho = lines[i][0][0]
+            theta = lines[i][0][1]
             a = math.cos(theta)
             b = math.sin(theta)
             x0 = a * rho
@@ -258,14 +345,29 @@ def Draw_hough_line_image(image):
             pt2_y = int(y0 - 1000 * a)
             cv2.line(line_image, (pt1_x, pt1_y), (pt2_x, pt2_y), (255, 0, 0), 1, 8)
 
-    cv2.imshow('line_image', line_image)
-"""
+        M = cv2.getRotationMatrix2D((handle_image_height / 2, handle_image_width / 2),
+                                    - (1 / lines[0][0][0] * 400), 1)
+        dst = cv2.warpAffine(mask_image_inverted, M, (handle_image_height, handle_image_width))
+
+        roi = source[int(cap_image_height * 0.6):int(cap_image_height * 0.6) + handle_image_height,
+                    int(cap_image_width * 0.1):int(cap_image_width * 0.1) + handle_image_width]
+
+        bg = cv2.bitwise_and(roi, roi, mask=mask_image)
+
+        dst_a = cv2.bitwise_and(dst, dst, mask=mask_image_inverted)
+        dst_a = cv2.cvtColor(dst_a, cv2.COLOR_GRAY2BGR)
+        added = dst_a + bg
+        source[int(cap_image_height * 0.6):int(cap_image_height * 0.6) + handle_image_height,
+            int(cap_image_width * 0.1):int(cap_image_width * 0.1) + handle_image_width] = added
+    else:
+        cv2.putText(source, 'Warning : Cannot find line',
+                    (int(cap_image_width * 0.25), int(cap_image_height * 0.9)), font, 1, (50, 50, 255), 1)
 
 
 def Main():
     while cap.isOpened():
         ret, img = cap.read()
-        detected_image = Detect_object(img, net, CONFIDENCE, THRESHOLD)
+        ar_image = copy.deepcopy(img)
         equalized_image = Equalize_histogram_in_hsl(img)
         equalized_roi_image = Region_of_interest(equalized_image)
         warp_equalized_roi_image = Warp_image(equalized_roi_image)
@@ -273,11 +375,12 @@ def Main():
         count_bright = Count_bright(cap_image_gray_histogram)
         lane_image = Filter_lane_by_hsl(warp_equalized_roi_image, count_bright)
         not_blemishes_image = Remove_blemishes(lane_image)
+        Draw_hough_line_image(not_blemishes_image, ar_image)
         decided_lane = Decide_lane(not_blemishes_image)
-        # Draw_hough_line_image(decided_lane)
-        cv2.imshow('decided_lane', decided_lane)
-        cv2.imshow('img', detected_image)
-        cv2.imshow('result', lane_image)
+        detected_image = Detect_object(ar_image, net, CONFIDENCE, THRESHOLD)
+        To_ar_image_with_lane(ar_image, decided_lane)
+
+        cv2.imshow('detected_image', detected_image)
         if cv2.waitKey(1) == ord('q'):
             break
 
