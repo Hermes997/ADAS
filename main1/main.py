@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 # 비디오 소스
-cap = cv2.VideoCapture('calibratedSource4.mp4')
+cap = cv2.VideoCapture('calibratedSource1.mp4')
 # 다크넷 기반 프레임워크로 딥러닝을 구동하기위한 cfg파일과 weight파일 불러오기
 net = cv2.dnn.readNetFromDarknet("yolov4-tiny_custom.cfg", "yolov4-tiny_custom_final.weights")
 # 탐지하고자 하는 오브젝트 종류들
@@ -654,6 +654,8 @@ def Draw_hough_line_image(source, line_image_left, line_image_right, count_lane_
 
     lines_left = cv2.HoughLines(line_image_left, 1, 3.141592 / 180, int(count_lane_left * 0.6))
     lines_right = cv2.HoughLines(line_image_right, 1, 3.141592 / 180, int(count_lane_right * 0.6))
+    line_image_left = cv2.resize(line_image_left, dsize=(0, 0), fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
+    line_image_right = cv2.resize(line_image_right, dsize=(0, 0), fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
     cv2.imshow('line_image_left', line_image_left)
     cv2.imshow('line_image_right', line_image_right)
 
@@ -721,7 +723,7 @@ def Draw_line(source, lines, line_image):
         # 커브정도의 정보를 받고 꺾인 핸들의 모습을 주행영상에 합성
         source[int(cap_image_height * 0.6):int(cap_image_height * 0.6) + handle_image_height,
             int(cap_image_width * 0.1):int(cap_image_width * 0.1) + handle_image_width] = added
-
+        line_image = cv2.resize(line_image, dsize=(0, 0), fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
         cv2.imshow('line_image', line_image)
 
 
@@ -765,7 +767,7 @@ def Main():
         decided_lane = Decide_lane(not_blemishes_image, ar_image)
         Detect_object(img, ar_image, net, CONFIDENCE, THRESHOLD)
         final_result = To_ar_image_with_lane(ar_image, decided_lane)
-
+        final_result = cv2.resize(final_result, dsize=(0, 0), fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
         cv2.imshow('final_result', final_result)
 
         if cv2.waitKey(1) == ord('q'):
