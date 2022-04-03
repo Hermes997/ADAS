@@ -20,4 +20,4 @@ Simulation capture
 
 Algorithm
 
-![image](https://user-images.githubusercontent.com/86702182/161411112-45ba968a-9467-4e5d-a625-3e4681b9169e.png)
+![image](https://user-images.githubusercontent.com/86702182/161411240-90d45e4a-67d9-4cc9-a5c3-dfeef8fa6aa7.png)
